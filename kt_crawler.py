@@ -11,8 +11,8 @@ import requests
 KT_SHOP_BASE = "https://shop.kt.com"
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_CSV = BASE_DIR / "subsidy.csv"
-OUTPUT_LOG = BASE_DIR / "crawl_log.txt"
+OUTPUT_PLAN_CSV = BASE_DIR / "KT_요금제.csv"
+OUTPUT_SUBSIDY_CSV = BASE_DIR / "KT_API.csv"
 
 MAX_WORKERS = 10
 REQUEST_TIMEOUT = 10
@@ -43,18 +43,20 @@ SUBSIDY_COLS = [
 ]
 
 
-if OUTPUT_LOG.exists():
-    OUTPUT_LOG.unlink()
-
-
 def log(message):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    text = f"[{now}] {message}"
+    print(f"[{now}] {message}")
 
-    print(text)
 
-    with OUTPUT_LOG.open("a", encoding="utf-8") as f:
-        f.write(text + "\n")
+def get_fieldnames(rows):
+    fieldnames = []
+
+    for row in rows:
+        for key in row.keys():
+            if key not in fieldnames:
+                fieldnames.append(key)
+
+    return fieldnames
 
 
 log("작업 시작")
@@ -162,6 +164,19 @@ for row in raw_plans:
     plans.append(cleaned)
 
 log(f"plan_count={len(plans)}")
+
+
+plan_fieldnames = get_fieldnames(plans)
+
+with OUTPUT_PLAN_CSV.open("w", newline="", encoding="utf-8-sig") as f:
+    if plan_fieldnames:
+        writer = csv.DictWriter(f, fieldnames=plan_fieldnames)
+        writer.writeheader()
+        writer.writerows(plans)
+    else:
+        f.write("")
+
+log(f"saved_plan_csv={OUTPUT_PLAN_CSV}")
 
 
 onfrm_cd_list = [row["onfrmCd"] for row in plans if row.get("onfrmCd")]
@@ -313,11 +328,10 @@ if DEFAULT_HEAD > 0:
 log(f"subsidy_count={len(subsidies)}")
 
 
-with OUTPUT_CSV.open("w", newline="", encoding="utf-8-sig") as f:
+with OUTPUT_SUBSIDY_CSV.open("w", newline="", encoding="utf-8-sig") as f:
     writer = csv.DictWriter(f, fieldnames=SUBSIDY_COLS)
     writer.writeheader()
     writer.writerows(subsidies)
 
-log(f"saved_csv={OUTPUT_CSV}")
-log(f"saved_log={OUTPUT_LOG}")
+log(f"saved_subsidy_csv={OUTPUT_SUBSIDY_CSV}")
 log("작업 완료")
