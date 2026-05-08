@@ -13,7 +13,7 @@ OUTPUT_CSV = Path(__file__).resolve().parent / "subsidy.csv"
 MAX_WORKERS = 10
 REQUEST_TIMEOUT = 10
 
-테스트용
+# 테스트용
 DEFAULT_LIMIT_ONFRM = 5
 DEFAULT_HEAD = 100
 
