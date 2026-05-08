@@ -28,5 +28,8 @@ jobs:
       - name: Upload CSV artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kt-subsidy-csv
-          path: subsidy.csv
+          name: kt-result-csv
+          path: |
+            KT_요금제.csv
+            KT_API.csv
+          retention-days: 1
