@@ -3,12 +3,16 @@ from __future__ import annotations
 import csv
 import html
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 import requests
 
 KT_SHOP_BASE = "https://shop.kt.com"
-OUTPUT_CSV = Path(__file__).resolve().parent / "subsidy.csv"
+
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_CSV = BASE_DIR / "subsidy.csv"
+OUTPUT_LOG = BASE_DIR / "crawl_log.txt"
 
 MAX_WORKERS = 10
 REQUEST_TIMEOUT = 10
@@ -39,6 +43,22 @@ SUBSIDY_COLS = [
 ]
 
 
+if OUTPUT_LOG.exists():
+    OUTPUT_LOG.unlink()
+
+
+def log(message):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = f"[{now}] {message}"
+
+    print(text)
+
+    with OUTPUT_LOG.open("a", encoding="utf-8") as f:
+        f.write(text + "\n")
+
+
+log("작업 시작")
+
 session = requests.Session()
 session.headers.update({
     "User-Agent": (
@@ -57,9 +77,10 @@ session.headers.update({
 kt_base = KT_SHOP_BASE.rstrip("/")
 
 try:
-    session.get(f"{kt_base}/mobile/mobile.do", timeout=REQUEST_TIMEOUT)
-except Exception:
-    pass
+    response = session.get(f"{kt_base}/mobile/mobile.do", timeout=REQUEST_TIMEOUT)
+    log(f"[INIT] mobile.do status={response.status_code}")
+except Exception as e:
+    log(f"[INIT_ERROR] mobile.do error={type(e).__name__}: {e}")
 
 
 plan_url = f"{kt_base}/oneMinuteReform/supportAmtChoiceList.json"
@@ -88,22 +109,27 @@ def fetch_plan(combo):
 
     try:
         response = session.post(plan_url, data=payload, timeout=REQUEST_TIMEOUT)
+        log(f"[PLAN] combo={combo} status={response.status_code}")
 
         if response.status_code != 200:
             return []
 
         rows = response.json().get("punoPplList", []) or []
+        log(f"[PLAN_RESULT] combo={combo} count={len(rows)}")
 
         for row in rows:
             row.update(combo)
 
         return rows
 
-    except Exception:
+    except Exception as e:
+        log(f"[PLAN_ERROR] combo={combo} error={type(e).__name__}: {e}")
         return []
 
 
 raw_plans = []
+
+log("plan 조회 시작")
 
 with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(payload_combinations))) as executor:
     futures = [executor.submit(fetch_plan, combo) for combo in payload_combinations]
@@ -111,8 +137,10 @@ with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(payload_combinations)))
     for future in as_completed(futures):
         try:
             raw_plans.extend(future.result())
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"[PLAN_FUTURE_ERROR] error={type(e).__name__}: {e}")
+
+log(f"raw_plan_count={len(raw_plans)}")
 
 
 seen = set()
@@ -133,12 +161,16 @@ for row in raw_plans:
 
     plans.append(cleaned)
 
+log(f"plan_count={len(plans)}")
+
 
 onfrm_cd_list = [row["onfrmCd"] for row in plans if row.get("onfrmCd")]
 onfrm_cd_list = list(dict.fromkeys(onfrm_cd_list))
 
 if DEFAULT_LIMIT_ONFRM > 0:
     onfrm_cd_list = onfrm_cd_list[:DEFAULT_LIMIT_ONFRM]
+
+log(f"target_onfrm_count={len(onfrm_cd_list)}")
 
 
 device_type_mapping = {
@@ -187,10 +219,20 @@ def fetch_subsidy(onfrm_cd, device_type, extra_info, dscn_optn_cd, sbsc_type_cd)
         try:
             response = session.post(url, data=payload, timeout=REQUEST_TIMEOUT)
 
+            log(
+                f"[SUBSIDY] onfrmCd={onfrm_cd} device={device_type} "
+                f"type={dscn_optn_cd} page={page} status={response.status_code}"
+            )
+
             if response.status_code != 200:
                 break
 
             rows = response.json().get("LIST_DATA", [])
+
+            log(
+                f"[SUBSIDY_RESULT] onfrmCd={onfrm_cd} device={device_type} "
+                f"type={dscn_optn_cd} page={page} count={len(rows)}"
+            )
 
             if not rows:
                 break
@@ -208,7 +250,11 @@ def fetch_subsidy(onfrm_cd, device_type, extra_info, dscn_optn_cd, sbsc_type_cd)
             records.extend(rows)
             page += 1
 
-        except Exception:
+        except Exception as e:
+            log(
+                f"[SUBSIDY_ERROR] onfrmCd={onfrm_cd} device={device_type} "
+                f"type={dscn_optn_cd} page={page} error={type(e).__name__}: {e}"
+            )
             break
 
     return records
@@ -227,6 +273,9 @@ tasks = [
     for option in option_combinations
 ]
 
+log(f"subsidy_task_count={len(tasks)}")
+log("subsidy 조회 시작")
+
 raw_subsidies = []
 
 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -235,8 +284,10 @@ with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
     for future in as_completed(futures):
         try:
             raw_subsidies.extend(future.result())
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"[SUBSIDY_FUTURE_ERROR] error={type(e).__name__}: {e}")
+
+log(f"raw_subsidy_count={len(raw_subsidies)}")
 
 
 subsidies = []
@@ -259,12 +310,14 @@ for record in raw_subsidies:
 if DEFAULT_HEAD > 0:
     subsidies = subsidies[:DEFAULT_HEAD]
 
+log(f"subsidy_count={len(subsidies)}")
+
 
 with OUTPUT_CSV.open("w", newline="", encoding="utf-8-sig") as f:
     writer = csv.DictWriter(f, fieldnames=SUBSIDY_COLS)
     writer.writeheader()
     writer.writerows(subsidies)
 
-print(f"plan_count={len(plans)}")
-print(f"subsidy_count={len(subsidies)}")
-print(f"saved={OUTPUT_CSV}")
+log(f"saved_csv={OUTPUT_CSV}")
+log(f"saved_log={OUTPUT_LOG}")
+log("작업 완료")
